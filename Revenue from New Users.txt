@@ -1,0 +1,80 @@
+WITH revenue_by_date as (
+  SELECT
+    DATE_TRUNC('day', time) :: date date,
+    SUM(price) revenue
+  FROM
+    (
+      SELECT
+        time,
+        user_id,
+        t2.order_id,
+        price
+      FROM
+        (
+          SELECT
+            order_id,
+            creation_time,
+            price
+          FROM
+            (
+              SELECT
+                *,
+                unnest(product_ids) as product_id
+              FROM
+                orders
+            ) t1
+            LEFT JOIN products p ON t1.product_id = p.product_id
+        ) t2
+        JOIN (
+          SELECT
+            user_id,
+            order_id,
+            time
+          FROM
+            user_actions
+          WHERE
+            order_id NOT IN (
+              SELECT
+                order_id
+              FROM
+                user_actions
+              WHERE
+                action = 'cancel_order'
+            )
+        ) t3 ON t2.order_id = t3.order_id
+    ) t4
+  GROUP BY
+    date
+),
+n as (
+    SELECT date , SUM(user_revenue) new_users_revenue
+    FROM (
+        SELECT user_id, SUM(order_price) user_revenue, date_trunc('day',time)::date date
+        FROM 
+        (SELECT *  FROM user_actions) ua LEFT JOIN 
+           ( SELECT order_id, SUM(price) order_price
+            FROM (
+                SELECT *, unnest(product_ids) as product_id 
+                FROM orders
+            ) t5 
+            JOIN products ON t5.product_id = products.product_id
+            GROUP BY order_id) order_price 
+        ON ua.order_id = order_price.order_id
+        WHERE ua.order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+        GROUP BY date, user_id
+    ) ur
+    JOIN (
+        SELECT user_id , date_trunc('day', MIN(time))::date as first_order
+        FROM user_actions
+        GROUP BY user_id
+        ORDER BY user_id
+    ) md
+    ON ur.user_id = md.user_id
+    WHERE date = first_order
+    GROUP BY date
+    ORDER BY date
+)
+SELECT r.date, revenue, new_users_revenue,
+       round((new_users_revenue / revenue *100),2) new_users_revenue_share,
+       100 - round((new_users_revenue / revenue *100),2) old_users_revenue_share
+FROM revenue_by_date r JOIN  n ON r.date = n.date

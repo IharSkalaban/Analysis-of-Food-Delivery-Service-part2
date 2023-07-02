@@ -1,0 +1,69 @@
+WITH r as (SELECT date, SUM(price) as revenue
+    FROM (
+        SELECT date_trunc('day', creation_time)::date as date, unnest(product_ids) as product_id
+        FROM orders
+        WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action ='cancel_order')
+    ) t1
+LEFT JOIN products p ON t1.product_id = p.product_id
+GROUP BY date
+ORDER BY date
+),
+create_ as 
+(SELECT date_trunc('day',creation_time)::date as date , COUNT(DISTINCT order_id) c_orders
+FROM orders
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action ='cancel_order')
+GROUP BY date),
+deliver_ as 
+(SELECT date_trunc('day', time)::date date, COUNT(DISTINCT order_id) as d_orders
+FROM courier_actions
+WHERE action ='deliver_order'
+GROUP BY date),
+bonus as 
+(SELECT date, COUNT(courier_id) bonus_payment
+FROM (
+    SELECT courier_id, COUNT(order_id) number_of_delivers, date_trunc('day', time)::date date
+    FROM courier_actions
+    WHERE action ='deliver_order'
+    GROUP BY courier_id, date
+    HAVING COUNT(order_id) >= 5
+)t1
+GROUP BY date
+ORDER BY date),
+expenses as 
+(SELECT c.date, 
+        CASE
+            WHEN EXTRACT(MONTH FROM c.date) = 8 THEN (120000 + 140*c_orders + 150*d_orders + COALESCE(400*bonus_payment,0))::decimal
+            ELSE (150000 + 115*c_orders + 150*d_orders +500*bonus_payment)::decimal
+        END  as costs
+FROM create_ c JOIN deliver_ d ON c.date = d.date
+    LEFT JOIN bonus ON d.date = bonus.date),
+taxes as 
+(SELECT date_trunc('day',creation_time)::date date, SUM(tax) tax
+FROM (
+    SELECT *,
+           unnest(product_ids) as product_id
+    FROM orders) o LEFT JOIN 
+    (
+    SELECT product_id,
+       name,
+       price,
+       case when name in ('сахар', 'сухарики', 'сушки', 'семечки', 'масло льняное', 'виноград', 'масло оливковое', 'арбуз', 'батон', 'йогурт', 'сливки', 'гречка', 'овсянка', 'макароны', 'баранина', 'апельсины', 'бублики', 'хлеб', 'горох', 'сметана', 'рыба копченая', 'мука', 'шпроты', 'сосиски', 'свинина', 'рис', 'масло кунжутное', 'сгущенка', 'ананас', 'говядина', 'соль', 'рыба вяленая', 'масло подсолнечное', 'яблоки', 'груши', 'лепешка', 'молоко', 'курица', 'лаваш', 'вафли', 'мандарины') then round(price/110*10,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       2)
+            else round(price/120*20, 2) end as tax
+    FROM   products
+    ORDER BY  product_id) p
+ON o.product_id = p.product_id
+WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+GROUP BY date)
+
+SELECT r.date, revenue, costs, tax,
+       revenue - costs - tax as gross_profit,
+       SUM(revenue) OVER (ORDER BY r.date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS total_revenue,
+       SUM(costs) OVER (ORDER BY r.date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS total_costs,
+       SUM(tax) OVER (ORDER BY r.date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS total_tax,
+       SUM(revenue - costs - tax) OVER (ORDER BY r.date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS total_gross_profit,
+       round(((revenue - costs - tax)::decimal/revenue *100),2) gross_profit_ratio,
+       round((SUM(revenue - costs - tax) OVER (ORDER BY r.date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)*100::decimal/SUM(revenue) OVER (ORDER BY r.date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)),2) total_gross_profit_ratio
+FROM r JOIN expenses ON r.date = expenses.date
+       JOIN taxes ON expenses.date = taxes.date
+ORDER BY date

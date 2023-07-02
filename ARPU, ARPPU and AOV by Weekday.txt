@@ -1,0 +1,73 @@
+WITH t1 AS (
+  SELECT
+    DATE_PART('isodow', creation_time) as weekday_number,
+    COUNT (distinct order_id) as orders_count,
+    sum(price) as weekday_revenue,
+    to_char (creation_time, 'Day') as weekday
+  FROM
+    (
+      SELECT
+        order_id,
+        creation_time,
+        unnest(product_ids) as product_id
+      FROM
+        orders
+    ) as o
+    LEFT JOIN products as p on o.product_id = p.product_id
+  WHERE
+    order_id not in (
+      SELECT
+        order_id
+      FROM
+        user_actions
+      WHERE
+        action = 'cancel_order'
+    )
+    and creation_time :: date between '2022-08-26'
+    and '2022-09-08'
+  GROUP BY
+    weekday_number,
+    weekday
+),
+users as (
+  SELECT
+    DATE_PART('isodow', time) as weekday_number,
+    COUNT (DISTINCT user_id) as users
+  FROM
+    user_actions
+  Where
+    time :: date between '2022-08-26'
+    and '2022-09-08'
+  Group by
+    weekday_number
+),
+paying_users as (
+  SELECT
+    DATE_PART('isodow', time) as weekday_number,
+    COUNT (distinct user_id) as paying_users
+  FROM
+    user_actions
+  WHERE
+    order_id not in (
+      SELECT
+        order_id
+      FROM
+        user_actions
+      WHERE
+        action = 'cancel_order'
+    )
+    and time :: date between '2022-08-26'
+    and '2022-09-08'
+  GROUP BY
+    weekday_number
+)
+SELECT
+  weekday,
+  weekday_number,
+  round(weekday_revenue / users, 2) as arpu,
+  round(weekday_revenue / paying_users, 2) as arppu,
+  round(weekday_revenue / orders_count, 2) as aov
+FROM
+  t1
+  LEFT JOIN users using (weekday_number)
+  LEFT JOIN paying_users using (weekday_number)

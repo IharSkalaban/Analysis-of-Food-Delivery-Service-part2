@@ -1,0 +1,40 @@
+WITH total_revenue as  (  
+SELECT date , SUM(price) as revenue
+    FROM 
+    (
+        SELECT order_id, date_trunc('day', creation_time)::date date, t1.product_id, name, price
+        FROM (
+            SELECT *,
+                   unnest(product_ids) as product_id
+            FROM orders
+            WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+            ) t1
+        LEFT JOIN products p ON t1.product_id = p.product_id
+    ) t2
+GROUP BY date
+),
+all_users as (
+    SELECT date_trunc('day', time)::date date, count(distinct user_id) as users
+    FROM user_actions   
+    GROUP BY date
+),
+paying_users as (
+    SELECT date_trunc('day', time)::date date, count(distinct user_id) as paying_user
+    FROM user_actions
+    WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+    GROUP BY date
+),
+number_orders as (
+    SELECT date_trunc('day', creation_time)::date date, count(distinct order_id) as orders
+    FROM orders
+    WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action = 'cancel_order')
+    GROUP BY date
+)
+SELECT r.date, 
+       round((revenue::decimal / users),2) as ARPU,
+       round((revenue::decimal / paying_user),2) as ARPPU,
+       round((revenue::decimal / orders),2) as AOV
+FROM total_revenue r JOIN all_users u ON r.date = u.date
+     JOIN paying_users p ON u.date = p.date
+     JOIN number_orders o ON p.date = o.date
+ORDER BY r.date

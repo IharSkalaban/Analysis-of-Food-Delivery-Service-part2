@@ -1,0 +1,15 @@
+SELECT date,
+       revenue,
+       SUM(revenue) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as total_revenue,
+       round(((revenue - LAG(revenue) OVER ())::decimal/ LAG(revenue) OVER () *100),2) revenue_change
+FROM (
+    SELECT date, SUM(price)::int as revenue
+    FROM (
+        SELECT date_trunc('day', creation_time) as date, unnest(product_ids) as product_id
+        FROM orders
+        WHERE order_id NOT IN (SELECT order_id FROM user_actions WHERE action ='cancel_order')
+    ) t1
+    LEFT JOIN products p ON t1.product_id = p.product_id
+    GROUP BY date
+    ORDER BY date
+) t2
